@@ -223,4 +223,3 @@ public final class CoreProtect extends JavaPlugin {
     }
 
 }
-
