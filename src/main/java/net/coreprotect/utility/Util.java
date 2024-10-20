@@ -11,6 +11,7 @@ import java.text.DecimalFormatSymbols;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.Date;
 import java.util.HashMap;
 import java.util.List;
@@ -20,6 +21,8 @@ import java.util.Set;
 import java.util.SortedSet;
 import java.util.TreeSet;
 
+import org.apache.logging.log4j.Level;
+import org.apache.logging.log4j.core.config.Configurator;
 import org.bukkit.Bukkit;
 import org.bukkit.Location;
 import org.bukkit.Material;
@@ -60,9 +63,12 @@ import net.coreprotect.database.rollback.Rollback;
 import net.coreprotect.language.Phrase;
 import net.coreprotect.model.BlockGroup;
 import net.coreprotect.thread.CacheHandler;
+import net.coreprotect.thread.NetworkHandler;
 import net.coreprotect.thread.Scheduler;
 import net.coreprotect.utility.serialize.ItemMetaHandler;
 import net.coreprotect.worldedit.CoreProtectEditSessionEvent;
+import oshi.SystemInfo;
+import oshi.hardware.CentralProcessor;
 
 public class Util extends Queue {
 
@@ -107,8 +113,29 @@ public class Util extends Queue {
         if (branch.startsWith("-edge")) {
             name = name + " " + branch.substring(1, 2).toUpperCase() + branch.substring(2, 5);
         }
+        else if (isCommunityEdition()) {
+            name = name + " " + ConfigHandler.COMMUNITY_EDITION;
+        }
 
         return name;
+    }
+
+    public static CentralProcessor getProcessorInfo() {
+        CentralProcessor result = null;
+        try {
+            Class.forName("com.sun.jna.Platform");
+            if (System.getProperty("os.name").startsWith("Windows") && !System.getProperty("sun.arch.data.model").equals("64")) {
+                Class.forName("com.sun.jna.platform.win32.Win32Exception");
+            }
+            Configurator.setLevel("oshi.hardware.common.AbstractCentralProcessor", Level.OFF);
+            SystemInfo systemInfo = new SystemInfo();
+            result = systemInfo.getHardware().getProcessor();
+        }
+        catch (Exception e) {
+            // unable to read processor information
+        }
+
+        return result;
     }
 
     public static int getBlockId(Material material) {
@@ -579,8 +606,10 @@ public class Util extends Queue {
             bos.close();
             result = bos.toByteArray();
         }
-        catch (Exception e) {
-            e.printStackTrace();
+        catch (Exception e) { // only display exception on development branch
+            if (!ConfigHandler.EDITION_BRANCH.contains("-dev")) {
+                e.printStackTrace();
+            }
         }
 
         return result;
@@ -637,6 +666,33 @@ public class Util extends Queue {
         }
 
         return result;
+    }
+
+    public static ItemStack[] sortContainerState(ItemStack[] array) {
+        if (array == null) {
+            return null;
+        }
+
+        ItemStack[] sorted = new ItemStack[array.length];
+        Map<String, ItemStack> map = new HashMap<>();
+        for (ItemStack itemStack : array) {
+            if (itemStack == null) {
+                continue;
+            }
+
+            map.put(itemStack.toString(), itemStack);
+        }
+
+        ArrayList<String> sortedKeys = new ArrayList<>(map.keySet());
+        Collections.sort(sortedKeys);
+
+        int i = 0;
+        for (String key : sortedKeys) {
+            sorted[i] = map.get(key);
+            i++;
+        }
+
+        return sorted;
     }
 
     /* return true if ItemStack[] contents are identical */
@@ -1334,6 +1390,18 @@ public class Util extends Queue {
         }
 
         return true;
+    }
+
+    public static boolean isCommunityEdition() {
+        return !isBranch("edge") && !isBranch("coreprotect") && !validDonationKey();
+    }
+
+    public static boolean isBranch(String branch) {
+        return ConfigHandler.EDITION_BRANCH.contains("-" + branch);
+    }
+
+    public static boolean validDonationKey() {
+        return NetworkHandler.donationKey() != null;
     }
 
     public static String getBranch() {
