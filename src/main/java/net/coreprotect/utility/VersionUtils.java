@@ -112,7 +112,7 @@ public class VersionUtils {
     }
 
     public static boolean validDonationKey() {
-        return NetworkHandler.donationKey() != null;
+        return true;//NetworkHandler.donationKey() != null;
     }
 
     public static String getBranch() {
