@@ -5,6 +5,8 @@ on:
       - master
   pull_request:
     types: [opened, synchronize, reopened]
+  workflow_dispatch:
+  
 jobs:
   build:
     name: Build
@@ -20,4 +22,10 @@ jobs:
           distribution: 'temurin'
           cache: 'maven'
       - name: Build
-        run: mvn -B verify
+        run: mvn -B clean install -Dproject.branch=coreprotect #verify
+      - name: upload the artifcats
+        uses: actions/upload-artifact@v4.3.3
+        with:
+          name: CoreProtect
+          path: target/CoreProtect-*.jar
+          warn: true
