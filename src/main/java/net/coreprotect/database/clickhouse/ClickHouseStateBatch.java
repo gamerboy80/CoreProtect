@@ -44,18 +44,22 @@ final class ClickHouseStateBatch implements AutoCloseable {
         entityStateUpdates.put(pointer.getRowId(), state);
     }
 
-    void appendTo(ClickHouseRowBinaryBuffer rows, int firstOrdinal) throws SQLException {
+    void appendTo(ClickHouseRowBinaryBuffer rows, int firstOrdinal, Map<Integer, Integer> partitionRowCounts) throws SQLException {
         if (sealed) {
             throw new IllegalStateException("ClickHouse state batch is already appended");
         }
         ensureWritable();
         Objects.requireNonNull(rows, "rows");
+        Objects.requireNonNull(partitionRowCounts, "partitionRowCounts");
         int ordinal = firstOrdinal;
         for (Map<Long, RollbackUpdate> familyUpdates : rollbackUpdates.values()) {
             for (RollbackUpdate update : familyUpdates.values()) {
                 beginSparseRow(rows, update, ordinal++);
                 rows.set("rolled_back", update.rolledBack);
-                rows.commitRow("rollback state update");
+                commitRow(rows, "rollback state update", update.family, update.time, partitionRowCounts);
+                int partition = ClickHouseSchema.eventPartitionId(update.family, update.time);
+                ClickHouseLookupIndex.append(rows, update.family, partition, true);
+                partitionRowCounts.merge(partition, 1, Math::addExact);
             }
         }
         for (ClickHouseEntityState state : entityStateUpdates.values()) {
@@ -78,7 +82,7 @@ final class ClickHouseStateBatch implements AutoCloseable {
             rows.set("entity_data", data);
             rows.set("entity_data_present", data == null ? 0 : 1);
             rows.set("removed", state.isRemoved() ? 1 : 0);
-            rows.commitRow("entity state update");
+            commitRow(rows, "entity state update", pointer.getFamily(), pointer.getTime(), partitionRowCounts);
         }
         sealed = true;
     }
@@ -156,9 +160,8 @@ final class ClickHouseStateBatch implements AutoCloseable {
 
     private void beginSparseRow(ClickHouseRowBinaryBuffer rows, ClickHouseFamily family, long rowId, int time, int worldId, int x, int z, int ordinal) {
         rows.beginRow();
-        rows.set("dataset_id", identity.getDatasetId());
-        rows.set("producer_id", identity.getProducerId());
-        rows.set("producer_sequence", identity.getProducerSequence());
+        rows.set("write_version", ClickHouseSchema.VERSION);
+        rows.set("batch_sequence", identity.getBatchSequence());
         rows.set("batch_id", identity.getBatchId());
         rows.set("batch_ordinal", ordinal);
         rows.set("family", family.getTableName());
@@ -167,6 +170,13 @@ final class ClickHouseStateBatch implements AutoCloseable {
         rows.set("wid", worldId);
         rows.set("x", x);
         rows.set("z", z);
+    }
+
+    private static void commitRow(ClickHouseRowBinaryBuffer rows, String description, ClickHouseFamily family, int time,
+            Map<Integer, Integer> partitionRowCounts) throws SQLException {
+        int partitionId = ClickHouseSchema.eventPartitionId(family, time);
+        rows.commitRow(description, partitionId);
+        partitionRowCounts.merge(partitionId, 1, Math::addExact);
     }
 
     private void ensureWritable() {
@@ -180,8 +190,7 @@ final class ClickHouseStateBatch implements AutoCloseable {
     }
 
     private boolean isLocal(ClickHouseEventPointer pointer, int eventCount) {
-        return identity.getProducerId().equals(pointer.getProducerId())
-                && identity.getProducerSequence() == pointer.getProducerSequence()
+        return identity.getBatchSequence() == pointer.getBatchSequence()
                 && pointer.getBatchOrdinal() < eventCount;
     }
 

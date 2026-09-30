@@ -24,8 +24,8 @@ import net.coreprotect.config.ConfigHandler;
 import net.coreprotect.database.ConsumerEntitySpawnUpdates;
 import net.coreprotect.database.ConsumerWriteBatch;
 import net.coreprotect.database.Database;
+import net.coreprotect.database.DatabaseType;
 import net.coreprotect.database.EntitySpawnUpdateCoordinator;
-import net.coreprotect.utility.DatabaseUtils;
 import net.coreprotect.model.action.LookupActions;
 import net.coreprotect.model.entity.EntityContainerRollbackUpdate;
 import net.coreprotect.model.entity.EntityInteractionOrigin;
@@ -36,6 +36,7 @@ import net.coreprotect.model.lookup.EntityLookupContext;
 import net.coreprotect.utility.ErrorReporter;
 import net.coreprotect.utility.EntitySpawnTracking;
 import net.coreprotect.utility.WorldUtils;
+import net.coreprotect.utility.serialize.EntityDataCodec.Kind;
 
 public final class EntitySpawnStatement {
 
@@ -71,6 +72,16 @@ public final class EntitySpawnStatement {
 
     public static void addKillLink(ConsumerWriteBatch batch, String uuid, int killRowId) throws Exception {
         batch.linkEntitySpawnKill(UUID.fromString(uuid), killRowId);
+    }
+
+    public static Integer findRowIdByUuid(Connection connection, UUID uuid) throws SQLException {
+        String query = "SELECT rowid AS id FROM " + ConfigHandler.prefix + "entity_spawn WHERE uuid=? LIMIT 1";
+        try (PreparedStatement statement = connection.prepareStatement(query)) {
+            statement.setString(1, uuid.toString());
+            try (ResultSet resultSet = statement.executeQuery()) {
+                return resultSet.next() ? resultSet.getInt("id") : null;
+            }
+        }
     }
 
     public static Map<Integer, EntitySpawnRecord> loadRecords(Connection connection, Collection<Integer> rowIds) throws SQLException {
@@ -317,8 +328,7 @@ public final class EntitySpawnStatement {
                     int killRowId = resultSet.getInt("kill_rowid");
                     List<Object> state = null;
                     if (includeState) {
-                        byte[] serializedState = DatabaseUtils.getBytes(resultSet, "data");
-                        state = serializedState == null || serializedState.length == 0 ? null : EntityStatement.deserializeData(serializedState);
+                        state = EntityStatement.readData(resultSet, "data", Kind.ENTITY_SPAWN);
                         if (state != null && state.size() < 4) {
                             state = null;
                         }
@@ -337,7 +347,7 @@ public final class EntitySpawnStatement {
         }
 
         String keyColumn = byRowId ? "rowid" : "uuid";
-        String query = "SELECT rowid AS id,uuid,wid,origin_x,origin_y,origin_z FROM " + ConfigHandler.prefix + "entity_spawn WHERE " + keyColumn + " IN(" + placeholders + ")";
+        String query = "SELECT rowid AS id,uuid,wid,origin_x,origin_y,origin_z,block_rowid FROM " + ConfigHandler.prefix + "entity_spawn WHERE " + keyColumn + " IN(" + placeholders + ")";
         try (PreparedStatement statement = connection.prepareStatement(query)) {
             for (int index = 0; index < ids.size(); index++) {
                 if (byRowId) {
@@ -351,7 +361,7 @@ public final class EntitySpawnStatement {
             List<EntitySpawnIdentity> identities = new ArrayList<>();
             try (ResultSet resultSet = statement.executeQuery()) {
                 while (resultSet.next()) {
-                    identities.add(new EntitySpawnIdentity(resultSet.getInt("id"), UUID.fromString(resultSet.getString("uuid")), resultSet.getInt("wid"), resultSet.getDouble("origin_x"), resultSet.getDouble("origin_y"), resultSet.getDouble("origin_z")));
+                    identities.add(new EntitySpawnIdentity(resultSet.getInt("id"), UUID.fromString(resultSet.getString("uuid")), resultSet.getInt("wid"), resultSet.getDouble("origin_x"), resultSet.getDouble("origin_y"), resultSet.getDouble("origin_z"), resultSet.getObject("block_rowid") != null));
                 }
             }
             return identities;
@@ -378,13 +388,19 @@ public final class EntitySpawnStatement {
         private final PreparedStatement blockStateMatches;
         private final Statement transitionStatement;
         private final EntitySpawnUpdateCoordinator coordinator = new EntitySpawnUpdateCoordinator();
+        private final DatabaseType databaseType;
 
         public Updates(Connection connection) throws Exception {
-            this(connection, null);
+            this(connection, null, ConfigHandler.databaseType);
         }
 
         public Updates(Connection connection, ConsumerWriteBatch batch) throws Exception {
+            this(connection, batch, ConfigHandler.databaseType);
+        }
+
+        public Updates(Connection connection, ConsumerWriteBatch batch, DatabaseType databaseType) throws Exception {
             this.batch = batch;
+            this.databaseType = databaseType;
             location = connection.prepareStatement("UPDATE " + ConfigHandler.prefix + "entity_spawn SET current_wid=?,x=?,y=?,z=?,yaw=?,pitch=? WHERE uuid=? AND removed=0");
             removed = connection.prepareStatement("UPDATE " + ConfigHandler.prefix + "entity_spawn SET current_wid=?,x=?,y=?,z=?,yaw=?,pitch=?,data=NULL,removed=1 WHERE uuid=? AND removed=0");
             revived = connection.prepareStatement("UPDATE " + ConfigHandler.prefix + "entity_spawn SET uuid=?,current_wid=?,x=?,y=?,z=?,yaw=?,pitch=?,data=NULL,removed=0 WHERE uuid=? AND removed=1");
@@ -396,7 +412,7 @@ public final class EntitySpawnStatement {
             compositeRestore = connection.prepareStatement("UPDATE " + ConfigHandler.prefix + "entity_spawn SET data=NULL,removed=1 WHERE rowid=? AND kill_rowid=?");
             blockState = connection.prepareStatement("UPDATE " + ConfigHandler.prefix + "block SET rolled_back=? WHERE rowid=? AND action=?");
             exists = connection.prepareStatement("SELECT 1 FROM " + ConfigHandler.prefix + "entity_spawn WHERE uuid=? AND removed=0 LIMIT 1");
-            identity = connection.prepareStatement("SELECT rowid AS id,wid,origin_x,origin_y,origin_z FROM " + ConfigHandler.prefix + "entity_spawn WHERE uuid=? LIMIT 2");
+            identity = connection.prepareStatement("SELECT rowid AS id,wid,origin_x,origin_y,origin_z,block_rowid FROM " + ConfigHandler.prefix + "entity_spawn WHERE uuid=? LIMIT 2");
             trackingRowExists = connection.prepareStatement("SELECT 1 FROM " + ConfigHandler.prefix + "entity_spawn WHERE rowid=? LIMIT 1");
             trackingKillStateMatches = connection.prepareStatement("SELECT uuid,removed FROM " + ConfigHandler.prefix + "entity_spawn WHERE rowid=? AND kill_rowid=? LIMIT 1");
             blockStateMatches = connection.prepareStatement("SELECT 1 FROM " + ConfigHandler.prefix + "block WHERE rowid=? AND action=? AND rolled_back=? LIMIT 1");
@@ -547,7 +563,7 @@ public final class EntitySpawnStatement {
                 byte[] serializedState = data.getState();
                 Location rollbackLocation = data.getLocation();
                 setLocation(rollback, rollbackLocation, 1);
-                setNullableBytes(rollback, 7, serializedState);
+                setNullableData(rollback, 7, serializedState);
                 rollback.setInt(8, data.getTrackingRowId());
                 requireTrackingUpdate(rollback.executeUpdate(), data.getTrackingRowId(), "entity spawn tracking rollback");
                 updateBlockState(data.getBlockRowId(), data.getRolledBack(), LookupActions.ENTITY_SPAWN);
@@ -605,7 +621,7 @@ public final class EntitySpawnStatement {
         private void applyCompositeRollback(EntitySpawnData data) throws Exception {
             Database.executeSavepoint(transitionStatement, "entity_spawn_composite_transition", () -> {
                 setLocation(compositeRollback, data.getLocation(), 1);
-                setNullableBytes(compositeRollback, 7, data.getState());
+                setNullableData(compositeRollback, 7, data.getState());
                 compositeRollback.setInt(8, data.getTrackingRowId());
                 compositeRollback.setInt(9, data.getKillRowId());
                 requireTrackingKillUpdate(compositeRollback.executeUpdate(), data.getTrackingRowId(), data.getKillRowId(), true, null, "tracked entity composite rollback");
@@ -663,7 +679,7 @@ public final class EntitySpawnStatement {
             statement.setFloat(offset + 5, value.getPitch());
         }
 
-        private void setNullableBytes(PreparedStatement statement, int index, byte[] value) throws Exception {
+        private void setNullableData(PreparedStatement statement, int index, byte[] value) throws Exception {
             if (value == null) {
                 statement.setNull(index, Types.BLOB);
             }
@@ -685,7 +701,7 @@ public final class EntitySpawnStatement {
                 if (!resultSet.next()) {
                     return null;
                 }
-                EntitySpawnIdentity value = new EntitySpawnIdentity(resultSet.getInt("id"), uuid, resultSet.getInt("wid"), resultSet.getDouble("origin_x"), resultSet.getDouble("origin_y"), resultSet.getDouble("origin_z"));
+                EntitySpawnIdentity value = new EntitySpawnIdentity(resultSet.getInt("id"), uuid, resultSet.getInt("wid"), resultSet.getDouble("origin_x"), resultSet.getDouble("origin_y"), resultSet.getDouble("origin_z"), resultSet.getObject("block_rowid") != null);
                 if (resultSet.next()) {
                     throw new SQLException("Entity UUID resolves to multiple tracking rows: " + uuid);
                 }
@@ -722,6 +738,11 @@ public final class EntitySpawnStatement {
 
         public void afterCommit(boolean committed) {
             coordinator.afterCommit(committed);
+        }
+
+        @Override
+        public void afterRetain() {
+            coordinator.afterRetain();
         }
 
         public void afterDiscard() {

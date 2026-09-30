@@ -103,6 +103,10 @@ public class SessionLookup {
             return result;
         }
 
+        if (options == null) {
+            options = LookupOptions.builder().build();
+        }
+
         try (Connection connection = Database.getConnection(false, 1000)) {
             if (connection == null) {
                 return result;
@@ -119,7 +123,8 @@ public class SessionLookup {
                 query.append(WorldUtils.getWidIndex("session"));
             }
             filter.appendWhere(query);
-            query.append(" ORDER BY rowid DESC");
+            LookupFilter.appendActionWhere(query, "", options.getSessionActions().stream().mapToInt(SessionAction::id).toArray());
+            query.append(" ORDER BY ").append(ConfigHandler.getDescendingEventOrder());
             filter.appendLimit(query);
 
             try (PreparedStatement statement = connection.prepareStatement(query.toString())) {
@@ -162,7 +167,7 @@ public class SessionLookup {
      * @return The SQL query string
      */
     private static String buildSessionQuery(int userId, int checkTime) {
-        return "SELECT time," + ConfigHandler.databaseType.getUserColumn() + ",wid,x,y,z,action FROM " + ConfigHandler.prefix + "session WHERE " + ConfigHandler.databaseType.getUserColumn() + " = " + userId + " AND time > " + checkTime + " ORDER BY rowid DESC";
+        return "SELECT time," + ConfigHandler.databaseType.getUserColumn() + ",wid,x,y,z,action FROM " + ConfigHandler.prefix + "session WHERE " + ConfigHandler.databaseType.getUserColumn() + " = " + userId + " AND time > " + checkTime + " ORDER BY " + ConfigHandler.getDescendingEventOrder();
     }
 
     /**

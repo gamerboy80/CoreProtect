@@ -68,6 +68,7 @@ public class BukkitAdapter implements BukkitInterface {
     public static final int BUKKIT_V1_20 = 20;
     public static final int BUKKIT_V1_21 = 21;
     public static final int BUKKIT_V1_21_5 = 21005;
+    public static final int BUKKIT_V1_21_11 = 21011;
     public static final int BUKKIT_V26_0 = 26000;
     public static final int BUKKIT_V26_1 = 26010;
     public static final int BUKKIT_V26_2 = 26020;
@@ -92,6 +93,9 @@ public class BukkitAdapter implements BukkitInterface {
         int bukkitVersion = ConfigHandler.SERVER_VERSION;
         if (bukkitVersion >= BUKKIT_V26_2) {
             ADAPTER = new Bukkit_v26_2();
+        }
+        else if (bukkitVersion >= BUKKIT_V1_21_11) {
+            ADAPTER = new Bukkit_v1_21_11();
         }
         else if (bukkitVersion >= BUKKIT_V1_21_5) {
             ADAPTER = new Bukkit_v1_21_5();
@@ -185,6 +189,20 @@ public class BukkitAdapter implements BukkitInterface {
         }
     }
 
+    public static Object getLegacyEnumValue(Class<?> type, String name) {
+        if (!type.isEnum()) {
+            return null;
+        }
+        try {
+            @SuppressWarnings({ "rawtypes", "unchecked" })
+            Object value = Enum.valueOf((Class<? extends Enum>) type.asSubclass(Enum.class), name);
+            return value;
+        }
+        catch (IllegalArgumentException | LinkageError exception) {
+            return null;
+        }
+    }
+
     @Override
     public void addMerchantRecipeMeta(MerchantRecipe recipe, List<Object> recipeData) {
     }
@@ -234,6 +252,11 @@ public class BukkitAdapter implements BukkitInterface {
     @Override
     public boolean setItemMeta(Material rowType, ItemStack itemstack, List<Map<String, Object>> map) {
         return false;
+    }
+
+    @Override
+    public String getItemName(ItemMeta itemMeta) {
+        return "";
     }
 
     @Override

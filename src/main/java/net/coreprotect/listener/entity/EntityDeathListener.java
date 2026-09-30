@@ -294,7 +294,6 @@ public final class EntityDeathListener extends Queue implements Listener {
                 age.add(ageable.getAgeLock());
                 age.add(ageable.isAdult());
                 age.add(ageable.canBreed());
-                age.add(null);
             }
 
             if (entity instanceof Tameable) {
@@ -321,7 +320,9 @@ public final class EntityDeathListener extends Queue implements Listener {
                             attributeModifiers.add(modifier.serialize());
                         }
 
-                        attributeData.add(attributeModifiers);
+                        if (!attributeModifiers.isEmpty()) {
+                            attributeData.add(attributeModifiers);
+                        }
                         attributes.add(attributeData);
                     }
                 }
@@ -406,7 +407,13 @@ public final class EntityDeathListener extends Queue implements Listener {
                     List<Object> itemMap = new ArrayList<>();
                     ItemStack item = merchantRecipe.getResult().clone();
                     List<List<Map<String, Object>>> metadata = ItemMetaHandler.serialize(item, item.getType(), null, 0);
-                    item.setItemMeta(null);
+                    try {
+                        if (item.hasItemMeta() && item.getItemMeta() != null) {
+                            item.setItemMeta(null);
+                        }
+                    }
+                    catch (Exception ignored) {
+                    }
                     itemMap.add(item.serialize());
                     itemMap.add(metadata);
                     recipe.add(itemMap);
@@ -418,7 +425,13 @@ public final class EntityDeathListener extends Queue implements Listener {
                         itemMap = new ArrayList<>();
                         item = ingredient.clone();
                         metadata = ItemMetaHandler.serialize(item, item.getType(), null, 0);
-                        item.setItemMeta(null);
+                        try {
+                            if (item.hasItemMeta() && item.getItemMeta() != null) {
+                                item.setItemMeta(null);
+                            }
+                        }
+                        catch (Exception ignored) {
+                        }
                         itemMap.add(item.serialize());
                         itemMap.add(metadata);
                         ingredients.add(itemMap);
@@ -561,6 +574,7 @@ public final class EntityDeathListener extends Queue implements Listener {
                 PaperAdapter.ADAPTER.getEntityMeta(entity, info);
             }
 
+            trimTrailingNulls(info);
             data.add(age);
             data.add(tame);
             data.add(info);
@@ -578,6 +592,12 @@ public final class EntityDeathListener extends Queue implements Listener {
             else {
                 Queue.queuePlayerKill(e, entity.getLocation(), entity.getName());
             }
+        }
+    }
+
+    private static void trimTrailingNulls(List<Object> values) {
+        while (!values.isEmpty() && values.get(values.size() - 1) == null) {
+            values.remove(values.size() - 1);
         }
     }
 

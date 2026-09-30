@@ -65,13 +65,17 @@ public class Queue {
         ConfigHandler.forceContainer.put(id, forceList);
     }
 
-    public static synchronized ItemStack[] pollForceContainer(String id) {
+    public static ItemStack[] pollForceContainer(String id) {
+        return pollForceContainer(id, 0);
+    }
+
+    public static synchronized ItemStack[] pollForceContainer(String id, int index) {
         List<ItemStack[]> forceList = ConfigHandler.forceContainer.get(id);
         if (forceList == null) {
             return null;
         }
 
-        ItemStack[] container = forceList.isEmpty() ? null : forceList.remove(0);
+        ItemStack[] container = index < 0 || index >= forceList.size() ? null : forceList.remove(index);
         if (forceList.isEmpty()) {
             ConfigHandler.forceContainer.remove(id);
         }
@@ -492,8 +496,8 @@ public class Queue {
         queueStandardData(new Object[] { null, Process.PLAYER_COMMAND, null, 0, null, 0, 0, null }, new String[] { player.getName(), null }, new Object[] { timestamp, player.getLocation().clone() }, false, Consumer.consumerStrings, message, Consumer.reserveConsumer());
     }
 
-    protected static void queuePlayerInteraction(String user, BlockState block, Material type) {
-        queueStandardData(new Object[] { null, Process.PLAYER_INTERACTION, type, 0, null, 0, 0, null }, new String[] { user, null }, block, false, Consumer.reserveConsumer());
+    protected static void queuePlayerInteraction(String user, Location location, Material type, String blockData) {
+        queueStandardData(new Object[] { null, Process.PLAYER_INTERACTION, type, 0, null, 0, 0, blockData }, new String[] { user, null }, getBlockLocation(location), false, Consumer.reserveConsumer());
     }
 
     protected static void queuePlayerKill(String user, Location location, String player) {
@@ -664,5 +668,9 @@ public class Queue {
 
     protected static void queueWorldInsert(int id, String world) {
         queueStandardData(new Object[] { null, Process.WORLD_INSERT, null, 0, null, 0, id, null }, new String[] { null, null }, world, false, Consumer.reserveConsumer());
+    }
+
+    protected static boolean tryQueueIdentifierInsert(int action, int id, String value) {
+        return queueStandardData(new Object[] { null, action, null, 0, null, 0, id, null }, new String[] { null, null }, value, false, Consumer.reserveConsumer());
     }
 }

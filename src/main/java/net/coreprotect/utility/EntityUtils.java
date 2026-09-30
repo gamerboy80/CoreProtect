@@ -5,6 +5,9 @@ import java.util.Locale;
 import org.bukkit.Material;
 import org.bukkit.entity.Entity;
 import org.bukkit.entity.EntityType;
+import org.bukkit.entity.Player;
+import org.bukkit.entity.Projectile;
+import org.bukkit.projectiles.ProjectileSource;
 
 import net.coreprotect.bukkit.BukkitAdapter;
 import net.coreprotect.config.ConfigHandler;
@@ -19,6 +22,24 @@ public class EntityUtils extends Queue {
         throw new IllegalStateException("Utility class");
     }
 
+    public static String getEntityUser(Entity entity) {
+        if (entity instanceof Projectile) {
+            ProjectileSource shooter = ((Projectile) entity).getShooter();
+            if (shooter instanceof Entity) {
+                entity = (Entity) shooter;
+            }
+        }
+        if (entity instanceof Player) {
+            return entity.getName();
+        }
+        if (entity == null) {
+            return null;
+        }
+
+        EntityType type = entity.getType();
+        return type == null ? null : "#" + type.name().toLowerCase(Locale.ROOT);
+    }
+
     public static int getEntityId(EntityType type) {
         if (type == null) {
             return -1;
@@ -31,22 +52,33 @@ public class EntityUtils extends Queue {
         int id = -1;
         name = name.toLowerCase(Locale.ROOT).trim();
 
+        if (ConfigHandler.databaseType.isClickHouse()) {
+            return ConfigHandler.resolveIdentifierId(ConfigHandler.CacheType.ENTITIES, name, internal);
+        }
         if (ConfigHandler.entities.get(name) != null) {
             id = ConfigHandler.entities.get(name);
         }
         else if (internal) {
-            // Check if another server has already added this entity (multi-server setup)
-            id = ConfigHandler.reloadAndGetId(ConfigHandler.CacheType.ENTITIES, name);
-            if (id != -1) {
-                return id;
-            }
+            // Same monitor as reloadAndGetId, so two threads cannot allocate the same id
+            synchronized (ConfigHandler.class) {
+                Integer existing = ConfigHandler.entities.get(name);
+                if (existing != null) {
+                    return existing;
+                }
 
-            int entityID = ConfigHandler.entityId + 1;
-            ConfigHandler.entities.put(name, entityID);
-            ConfigHandler.entitiesReversed.put(entityID, name);
-            ConfigHandler.entityId = entityID;
-            Queue.queueEntityInsert(entityID, name);
-            id = ConfigHandler.entities.get(name);
+                // Check if another server has already added this entity (multi-server setup)
+                id = ConfigHandler.reloadAndGetId(ConfigHandler.CacheType.ENTITIES, name);
+                if (id != -1) {
+                    return id;
+                }
+
+                id = ConfigHandler.entityId + 1;
+                ConfigHandler.entities.put(name, id);
+                ConfigHandler.entitiesReversed.put(id, name);
+                ConfigHandler.entityId = id;
+            }
+            // Queued outside the monitor so it is never held while the queue lock is taken
+            Queue.queueEntityInsert(id, name);
         }
 
         return id;
@@ -95,6 +127,10 @@ public class EntityUtils extends Queue {
 
     public static String getEntityName(int id) {
         // Internal ID pulled from DB
+        if (ConfigHandler.databaseType.isClickHouse()) {
+            String entityName = ConfigHandler.getIdentifierValue(ConfigHandler.CacheType.ENTITIES, id);
+            return entityName == null ? "" : entityName;
+        }
         String entityName = "";
         String cachedName = ConfigHandler.entitiesReversed.get(id);
         if (cachedName != null) {

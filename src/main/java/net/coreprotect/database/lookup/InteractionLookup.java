@@ -9,6 +9,7 @@ import org.bukkit.command.CommandSender;
 
 import net.coreprotect.config.ConfigHandler;
 import net.coreprotect.database.DuckDBLookupQuery;
+import net.coreprotect.database.LocationQuery;
 import net.coreprotect.database.statement.UserStatement;
 import net.coreprotect.language.Phrase;
 import net.coreprotect.language.Selector;
@@ -58,7 +59,7 @@ public class InteractionLookup {
                 checkTime = time - offset;
             }
 
-            String where = "wid = " + worldId + " AND x = " + x + " AND z = " + z + " AND y = " + y + " AND action=2 AND time >= " + checkTime;
+            String where = LocationQuery.predicate("wid", " = " + worldId) + " AND " + LocationQuery.predicate("x", " = " + x) + " AND " + LocationQuery.predicate("z", " = " + z) + " AND y = " + y + " AND action=2 AND time >= " + checkTime;
             boolean combinedDuckDBPage = ConfigHandler.databaseType.isDuckDB();
             String query;
             ResultSet results;
@@ -75,7 +76,7 @@ public class InteractionLookup {
                     count = results.getInt("count");
                 }
                 results.close();
-                query = "SELECT time," + ConfigHandler.databaseType.getUserColumn() + ",action,type,data,rolled_back FROM " + ConfigHandler.prefix + "block " + WorldUtils.getWidIndex("block") + "WHERE " + where + " ORDER BY rowid DESC LIMIT " + limit + " OFFSET " + pageStart;
+                query = "SELECT time," + ConfigHandler.databaseType.getUserColumn() + ",action,type,data,rolled_back FROM " + ConfigHandler.prefix + "block " + WorldUtils.getWidIndex("block") + "WHERE " + where + " ORDER BY " + ConfigHandler.getDescendingEventOrder() + " LIMIT " + limit + " OFFSET " + pageStart;
                 results = statement.executeQuery(query);
             }
 
